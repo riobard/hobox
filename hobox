@@ -1,0 +1,475 @@
+#!/usr/bin/env python
+
+import ConfigParser
+import collections
+import errno
+import os.path
+import re
+import shlex
+import subprocess
+import sys
+import tempfile
+import zipfile
+
+
+
+#### Config file related ####
+
+class CaseInsensitiveOrderedDict(collections.MutableMapping):
+    " Ordered dict with case-insensitive but case-preserving keys "
+
+    def __init__(self, items=[]):
+        self._k = {}
+        self._o = {}
+        self._d = {}
+
+        self._cnt = -1
+        for (k, v) in items:
+            self._cnt += 1
+            self._k[k.lower()] = k
+            self._o[k] = self._cnt
+            self._d[k] = v
+
+
+    def __contains__(self, k):
+        return k.lower() in self._k
+
+
+    def __len__(self):
+        return len(self._d)
+
+
+    def __iter__(self):
+        for k, _ in sorted(self._o.iteritems(), key=lambda x: x[1]):
+            yield k
+
+
+    def __getitem__(self, k):
+        v = self._d[self._k[k.lower()]]
+        return v
+
+
+    def __setitem__(self, k, v):
+        self._d[k] = v
+        self._k[k.lower()] = k
+        self._cnt += 1
+        self._o[k] = self._cnt
+
+
+    def __delitem__(self, k):
+        k = self._k[k.lower()]
+        del self._o[k]
+        del self._d[k]
+        del self._k[k]
+
+
+    def copy(self):
+        return CaseInsensitiveOrderedDict((k, self[k]) for k in self)
+
+
+    def original_key(self, k):
+        return self._k[k.lower()]
+
+
+
+class Config(object):
+
+    def __init__(self, f):
+        " Read config file "
+        cfg = ConfigParser.SafeConfigParser(
+                dict_type=CaseInsensitiveOrderedDict,
+                allow_no_value=True)
+        cfg.readfp(f)
+        self._cfg = cfg
+
+
+    def get(self, sect, name, fallback=None):
+        if self._cfg.has_option(sect, name):
+            return self._cfg.get(sect, name)
+        else:
+            return fallback
+
+
+    def getbool(self, sect, name, fallback=None):
+        if self._cfg.has_option(sect, name):
+            rs = self._cfg.get(sect, name)
+            if rs is None:
+                return True
+            else:
+                return self._cfg.getboolean(sect, name)
+        else:
+            return fallback
+
+
+    def getsize(self, sect, name, fallback=None):
+        " Handles B, KB, MB, GB, TB "
+        if self._cfg.has_option(sect, name):
+            rs = self._cfg.get(sect, name)
+
+            def parse_number(s):
+                try:
+                    return int(s)
+                except ValueError:
+                    return float(s)
+
+            try:
+                return parse_number(rs)
+            except ValueError:
+                r = rs.upper()
+                if r.endswith("KB"):
+                    return parse_number(r[:~1]) * (1<<10)
+                elif r.endswith("MB"):
+                    return parse_number(r[:~1]) * (1<<20)
+                elif r.endswith("GB"):
+                    return parse_number(r[:~1]) * (1<<30)
+                elif r.endswith("TB"):
+                    return parse_number(r[:~1]) * (1<<40)
+                elif r.endswith("B"):
+                    return parse_number(r[:~0])
+                else:
+                    raise
+        else:
+            return fallback
+
+
+    def getint(self, sect, name, fallback=None):
+        if self._cfg.has_option(sect, name):
+            return self._cfg.getint(sect, name)
+        else:
+            return fallback
+
+
+    def getfloat(self, sect, name, fallback=None):
+        if self._cfg.has_option(sect, name):
+            return self._cfg.getfloat(sect, name)
+        else:
+            return fallback
+
+
+    def getlist(self, sect, name, split=None, fallback=None):
+        if self._cfg.has_option(sect, name):
+            return self._cfg.get(sect, name).split(split)
+        else:
+            return fallback
+
+
+    def sections(self):
+        return self._cfg.sections()
+
+
+    def items(self, sect):
+        try:
+            return self._cfg.items(sect)
+        except ConfigParser.NoSectionError:
+            return []
+
+
+
+
+#### Calling external commands ####
+
+def sh(cmd):
+    subprocess.call(shlex.split(cmd))
+
+
+
+def vbm(cmd):
+    sh("VBoxManage " + cmd)
+
+
+
+def cp(read, write, show_progress=False, total_size = -1, bufsize=64<<10):
+    nbytes = 0
+    while True:
+        chunk = read(bufsize)
+        if not chunk: break
+        nbytes += len(chunk)
+        if show_progress: 
+            if total_size > 0:
+                print "{0:d}/{1:d} MB ({2:d}%)\r".format(
+                    nbytes>>20, total_size>>20, 100 * nbytes // total_size),
+            else:
+                print "{0:d} MB\r".format(nbytes>>20),
+        write(chunk)
+
+    if show_progress:
+        print
+
+
+
+
+class VBox(object):
+
+    def __init__(self, vmname, os = None):
+        self._vmname = vmname
+        if os:
+            vbm("createvm --name {0} --ostype {1} --register".format(vmname, os))
+        else:
+            vbm("createvm --name {0} --register".format(vmname))
+
+
+    def _join(self, kwargs):
+        cmd = []
+        for k, v in kwargs.items():
+            if isinstance(v, list):
+                for each in v:
+                    cmd.append("--{0} '{1}'".format(k, each))
+            elif isinstance(v, bool):
+                cmd.append("--{0} {1}".format(k, "on" if v else "off"))
+            else:
+                cmd.append("--{0} '{1}'".format(k, v))
+        return " ".join(cmd)
+
+
+    def modify(self, **kwargs):
+        vbm("modifyvm '{0}' {1}".format(self._vmname, self._join(kwargs)))
+
+
+    def storagectl(self, **kwargs):
+        vbm("storagectl '{0}' {1}".format(self._vmname, self._join(kwargs)))
+
+    
+    def storageattach(self, **kwargs):
+        vbm("storageattach '{0}' {1}".format(self._vmname, self._join(kwargs)))
+
+
+    def sharedfolder(self, **kwargs):
+        vbm("sharedfolder add '{0}' {1}".format(self._vmname, self._join(kwargs)))
+
+
+        
+def get_vbox_default_folder():
+    stdout = subprocess.Popen(["VBoxManage", "list" ,"systemproperties"], 
+                              stdout=subprocess.PIPE).communicate()[0]
+    rs = re.search(r"^Default machine folder: +(.+)$", stdout, re.MULTILINE)
+    if rs:
+        return rs.group(1)
+    else:
+        raise Exception("Couldn't locate Virtualbox default machine folder")
+
+
+
+
+class Hobox(object):
+
+    def __init__(self, name):
+        self.name = name
+        self._z = zipfile.ZipFile(name + ".hobox")
+        self.config = Config(self._z.open("hobox.cfg"))
+
+
+    def cmd_config(self, argv):
+        print self._z.open("hobox.cfg").read()
+
+
+    def cmd_del(self, argv):
+        vmname = self.name
+        confirm = raw_input("All data will be removed. Type 'yes' to confirm: ").lower()
+        if confirm == "yes":
+            vbm("unregistervm {0} --delete".format(vmname))
+
+
+    def cmd_hosts(self, argv):
+        cfg = self.config
+        vmname = self.name
+        target="/etc/hosts"
+        hosts = cfg.items("/etc/hosts")
+        if hosts:
+            records = "\n".join(["", "", "# [Hobox:{0}]".format(vmname)] + 
+                                ["{0} {1}".format(ip, domain) 
+                                    for (ip, domains) in hosts
+                                    for domain in domains.split()])
+
+            try:
+                f = open(target, "ab")
+                print "Appending to {0}".format(target)
+                print records
+                f.write(records)
+                f.close()
+            except IOError as e:
+                if e.errno == errno.EACCES:
+                    print "------------------------------------------------------------"
+                    print "Please edit your /etc/hosts file to add the following lines,"
+                    print "or run `sudo {0} hosts {1}` to edit it automatically.".format(argv[0], vmname)
+                    print "------------------------------------------------------------"
+                    print records
+
+
+    def cmd_ssh(self, argv):
+        cfg = self.config
+        user = cfg.get("SSH", "user")
+        host = cfg.get("SSH", "host")
+        port = cfg.getint("SSH", "port")
+        id_file = tempfile.NamedTemporaryFile()
+        id_file.write(cfg.get("SSH", "private_key"))
+        id_file.file.flush()
+        print 'Connecting {0}@{1} -p {2}'.format(user, host, port)
+        sh("ssh {user}@{host} -p {port} -i {key} {more}".format(
+            user = user, host = host, port = port, key = id_file.name, 
+            more = " ".join(argv[3:])))
+        id_file.close()
+
+
+    def cmd_up(self, argv):
+        headless=False
+        sh("VBoxManage startvm {0} {1}".format(self.name, 
+            "--type headless" if headless else ""))
+
+
+    def cmd_down(self, argv):
+        vbm("controlvm {0} acpipowerbutton".format(self.name))
+
+
+    def cmd_suspend(self, argv):
+        vbm("controlvm {0} savestate".format(self.name))
+
+
+    def cmd_pause(self, argv):
+        vbm("controlvm {0} pause".format(self.name))
+
+
+    def cmd_resume(self, argv):
+        vbm("controlvm {0} resume".format(self.name))
+
+
+    def cmd_reset(self, argv):
+        confirm = raw_input("Unsaved data will be lost. Type 'yes' to confirm: ").lower()
+        if confirm == "yes":
+            vbm("controlvm {0} reset".format(self.name))
+
+
+    def cmd_poweroff(self, argv):
+        confirm = raw_input("Unsaved data will be lost. Type 'yes' to confirm: ").lower()
+        if confirm == "yes":
+            vbm("controlvm {0} poweroff".format(self.name))
+
+
+    def cmd_init(self, argv):
+        vmname = self.name
+        cfg = self.config
+        vbox = VBox(vmname = vmname, os = cfg.get("Basic", "os"))
+
+        vbox.modify(
+            memory      = int(cfg.getsize("Basic", "memory", 256<<20))>>20, 
+            vram        = int(cfg.getsize("Basic", "vram", 4<<20))>>20,
+            rtcuseutc   = cfg.getbool("Basic", "rtcuseutc",     False),
+            hwvirtex    = cfg.getbool("Basic", "hwvirtex",      True),
+            nestedpaging= cfg.getbool("Basic", "nestedpaging",  True),
+            largepages  = cfg.getbool("Basic", "largepages",    True),
+            vtxvpid     = cfg.getbool("Basic", "vtxvpid",       True),
+            ioapic      = cfg.getbool("Basic", "ioapic",        True),
+            hpet        = cfg.getbool("Basic", "hpet",          True),
+            cpuhotplug  = cfg.getbool("Basic", "cpuhotplug",    False),
+            cpus        = cfg.getint("Basic",  "cpus",          1),
+            cpuexecutioncap = cfg.getint("Basic", "cpuexecutioncap", 100)
+        )
+
+        # Booting
+        boot_order = cfg.getlist("Basic", "boot_order")
+        vbox.modify(**dict( ("boot{0}".format(i), v) for (i, v) in zip(range(1, 5), boot_order)))
+
+        # Networking
+        for i in range(1, 5):
+            nic = cfg.get("NIC:{0}".format(i), "net", "").lower()
+            if nic in ("nat", "hostonly"):
+                d = { "nic{0}".format(i): nic,
+                    "nictype{0}".format(i): cfg.get("NIC:{0}".format(i), "type"),
+                    "cableconnected{0}".format(i): cfg.getbool(
+                                        "NIC:{0}".format(i), "cableconnected", True),
+                    "macaddress{0}".format(i): cfg.get("NIC:{0}".format(i), "mac", "auto")
+                }
+                if nic == "nat":
+                    ls = cfg.getlist("NIC:{0}".format(i), "port_forwarding")
+                    if ls:
+                        d["natpf{0}".format(i)] = ls
+                        print "Port forwarding:"
+                        for each in ls:
+                            print " ", each
+
+                if nic == "hostonly":
+                    d["hostonlyadapter{0}".format(i)] = cfg.get("NIC:{0}".format(i), "adapter")
+
+                vbox.modify(**d)
+                                    
+        sect = "StorageController:SAS"
+        sas_controller = cfg.get(sect, "controller")
+        if sas_controller:
+            vbox.storagectl(name="SAS", add="sas", controller=sas_controller,
+                            hostiocache=cfg.getbool(sect, "hostiocache", False),
+                            bootable=cfg.getbool(sect, "bootable", True))
+
+        sect = "StorageController:SATA"
+        sata_controller = cfg.get(sect, "controller")
+        if sata_controller:
+            vbox.storagectl(name="SATA", add="sata", controller=sata_controller,
+                            sataportcount=cfg.getint(sect, "sataportcount", 1),
+                            hostiocache=cfg.getbool(sect, "hostiocache", False),
+                            bootable=cfg.getbool(sect, "bootable", True))
+
+
+        for sect in cfg.sections():
+            if sect.lower().startswith("storageattach:"):
+                if cfg.get(sect, "type").lower() == "hdd":
+                    medium = cfg.get(sect, "medium")
+                    dstpath = os.path.join(get_vbox_default_folder(), vmname, medium)
+                    info = self._z.getinfo(medium)
+                    src = self._z.open(medium)
+                    dst = open(dstpath, "wb")
+                    print "Creating {0}".format(dstpath)
+                    cp(src.read, dst.write, total_size = info.file_size, show_progress=True)
+                    src.close()
+                    dst.close()
+
+                    vbox.storageattach(
+                        storagectl  = cfg.get(sect, "controller").upper(),
+                        port        = cfg.get(sect, "port", 0),
+                        device      = cfg.get(sect, "device", 0),
+                        type        = cfg.get(sect, "type"), 
+                        medium      = dstpath,
+                        mtype       = cfg.get(sect, "mtype", "normal"),
+                        setuuid     = cfg.get(sect, "uuid", ""))
+                else:
+                    vbox.storageattach(
+                        storagectl  = cfg.get(sect, "controller").upper(),
+                        port        = cfg.get(sect, "port"),
+                        device      = cfg.get(sect, "device"),
+                        type        = cfg.get(sect, "type"),
+                        medium      = cfg.get(sect, "medium"),
+                        mtype       = cfg.get(sect, "mtype"))
+
+        sharedfolders = cfg.items("SharedFolder")
+        if sharedfolders:
+            print "Shared Folder:"
+
+        for (name, path) in sharedfolders:
+            vbox.sharedfolder(name=name, hostpath=os.path.expanduser(path))
+            print "  [{0}] => {1}".format(name, path)
+
+        self.cmd_hosts(argv)
+
+
+
+def usage(argv):
+    cmd = os.path.basename(argv[0])
+    subcmds = []
+    for each in dir(Hobox):
+        if each.startswith("cmd_"):
+            subcmds.append(each[4:])
+    subcmds = "|".join(sorted(subcmds))
+    print "{0} {1} [vm name]".format(cmd, subcmds)
+
+
+
+def main(argv):
+    if len(argv) >= 3:
+        subcmd = argv[1].lower()
+        vmname = argv[2]
+        hobox = Hobox(vmname)
+        getattr(hobox, "cmd_" + subcmd, usage)(argv)
+    else:
+        usage(argv)
+
+
+
+if __name__ == "__main__":
+    main(sys.argv)
