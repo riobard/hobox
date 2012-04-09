@@ -251,15 +251,41 @@ def get_vbox_default_folder():
 
 
 class Hobox(object):
+    suffix = ".hobox"
 
     def __init__(self, name):
         self.name = name
-        self._z = zipfile.ZipFile(name + ".hobox")
-        self.config = Config(self._z.open("hobox.cfg"))
+        path = name if name.endswith(self.suffix) else name + self.suffix
+        if zipfile.is_zipfile(path):
+            self._z = zipfile.ZipFile(path)
+            self.config = Config(self._z.open("hobox.cfg"))
+        else:
+            sys.exit("{0} is not a valid Hobox".format(path))
+
+
+    def cmd_list(self, argv):
+        self._z.printdir()
+
+
+    def cmd_cat(self, argv):
+        bufsize = 64<<10
+        write = sys.stdout.write
+        try:
+            if len(argv) >= 4:
+                names = argv[3:]
+                for name in names:
+                    f = self._z.open(name)
+                    while True:
+                        data = f.read(bufsize)
+                        if not data: break
+                        write(data)
+        except KeyboardInterrupt:
+            pass
 
 
     def cmd_config(self, argv):
-        print self._z.open("hobox.cfg").read()
+        argv.append("hobox.cfg")
+        self.cmd_cat(argv)
 
 
     def cmd_del(self, argv):
@@ -275,7 +301,7 @@ class Hobox(object):
         target="/etc/hosts"
         hosts = cfg.items("/etc/hosts")
         if hosts:
-            records = "\n".join(["", "", "# [Hobox:{0}]".format(vmname)] + 
+            records = "\n".join(["# [Hobox:{0}]".format(vmname)] + 
                                 ["{0} {1}".format(ip, domain) 
                                     for (ip, domains) in hosts
                                     for domain in domains.split()])
@@ -284,13 +310,16 @@ class Hobox(object):
                 f = open(target, "ab")
                 print "Appending to {0}".format(target)
                 print records
+                f.write("\n")
                 f.write(records)
+                f.write("\n")
                 f.close()
             except IOError as e:
                 if e.errno == errno.EACCES:
+                    biname = os.path.basename(argv[0])
                     print "------------------------------------------------------------"
                     print "Please edit your /etc/hosts file to add the following lines,"
-                    print "or run `sudo {0} hosts {1}` to edit it automatically.".format(argv[0], vmname)
+                    print "or run `sudo {0} hosts {1}` to edit it automatically.".format(biname, vmname)
                     print "------------------------------------------------------------"
                     print records
 
@@ -301,7 +330,10 @@ class Hobox(object):
         host = cfg.get("SSH", "host")
         port = cfg.getint("SSH", "port")
         id_file = tempfile.NamedTemporaryFile()
-        id_file.write(cfg.get("SSH", "private_key"))
+        private_key = cfg.get("SSH", "private_key")
+        f = self._z.open(private_key)
+        cp(f.read, id_file.write)
+        f.close()
         id_file.file.flush()
         print 'Connecting {0}@{1} -p {2}'.format(user, host, port)
         sh("ssh {user}@{host} -p {port} -i {key} {more}".format(
