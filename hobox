@@ -283,6 +283,11 @@ class Hobox(object):
             pass
 
 
+    def cmd_info(self, argv):
+        argv.append("hobox.info")
+        self.cmd_cat(argv)
+
+
     def cmd_config(self, argv):
         argv.append("hobox.cfg")
         self.cmd_cat(argv)

@@ -23,6 +23,7 @@ Usage
     cd squeeze
     wget http://files.riobard.com/hobox/squeeze.hobox
     hobox init squeeze      # will take about 20 seconds
+    hobox info squeeze      # show information (if available)
     hobox up squeeze        # bring up the instance
     hobox ssh squeeze       # ssh into the instance
     hobox down squeeze      # bring down the instance 
