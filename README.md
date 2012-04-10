@@ -19,8 +19,8 @@ Requirement
 Usage
 ----
 
-    mkdir squeeze
-    cd squeeze
+    mkdir hobox
+    cd hobox
     wget http://files.riobard.com/hobox/squeeze.hobox
     hobox init squeeze      # will take about 20 seconds
     hobox info squeeze      # show information (if available)
@@ -34,5 +34,6 @@ Usage
 Todo
 ----
 
+* Clean up code
 * Specification of the .hobox container layout
 * Specification of the config file format
