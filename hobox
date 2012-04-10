@@ -249,6 +249,19 @@ def get_vbox_default_folder():
 
 
 
+port_forward_rule = re.compile(r"""
+    ^(?P<name>.*),
+     (?P<prot>tcp|udp),
+     (?P<hostip>.*),
+     (?P<hostport>[0-9]+),
+     (?P<guestip>.*),
+     (?P<guestport>[0-9]+)$""", re.VERBOSE | re.IGNORECASE)
+
+def parse_port_forwarding_rule(s):
+    r = port_forward_rule.match(s)
+    if r:
+        return r.groupdict()
+
 
 class Hobox(object):
     suffix = ".hobox"
@@ -432,10 +445,17 @@ class Hobox(object):
                 if nic == "nat":
                     ls = cfg.getlist("NIC:{0}".format(i), "port_forwarding")
                     if ls:
-                        d["natpf{0}".format(i)] = ls
-                        print "Port forwarding:"
+                        print "Port forwarding (host => guest):"
                         for each in ls:
-                            print " ", each
+                            rule = parse_port_forwarding_rule(each)
+                            if rule:
+                                if not rule["hostip"]: rule["hostip"] = "*"
+                                if not rule["guestip"]: rule["guestip"] = "*"
+                                fmt = "  [{name}] {prot}://{hostip}:{hostport} => {prot}://{guestip}:{guestport}"
+                                print fmt.format(**rule)
+                            else:
+                                print "  Error: invalid rule", each
+                        d["natpf{0}".format(i)] = ls
 
                 if nic == "hostonly":
                     d["hostonlyadapter{0}".format(i)] = cfg.get("NIC:{0}".format(i), "adapter")
