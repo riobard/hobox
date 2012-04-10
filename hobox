@@ -274,11 +274,16 @@ class Hobox(object):
             if len(argv) >= 4:
                 names = argv[3:]
                 for name in names:
-                    f = self._z.open(name)
-                    while True:
-                        data = f.read(bufsize)
-                        if not data: break
-                        write(data)
+                    try:
+                        f = self._z.open(name)
+                    except KeyError:
+                        # file not found
+                        continue
+                    else:
+                        while True:
+                            data = f.read(bufsize)
+                            if not data: break
+                            write(data)
         except KeyboardInterrupt:
             pass
 
@@ -336,15 +341,24 @@ class Hobox(object):
         port = cfg.getint("SSH", "port")
         id_file = tempfile.NamedTemporaryFile()
         private_key = cfg.get("SSH", "private_key")
-        f = self._z.open(private_key)
-        cp(f.read, id_file.write)
-        f.close()
-        id_file.file.flush()
-        print 'Connecting {0}@{1} -p {2}'.format(user, host, port)
-        sh("ssh {user}@{host} -p {port} -i {key} {more}".format(
-            user = user, host = host, port = port, key = id_file.name, 
-            more = " ".join(argv[3:])))
-        id_file.close()
+        if private_key:
+            try:
+                f = self._z.open(private_key)
+            except KeyError:    # key file not found
+                sys.exit("Private key not found")
+            else:
+                cp(f.read, id_file.write)
+                f.close()
+                id_file.file.flush()
+                print 'Connecting {0}@{1} -p {2}'.format(user, host, port)
+                sh("ssh {user}@{host} -p {port} -i {key} {more}".format(
+                    user = user, host = host, port = port, key = id_file.name, 
+                    more = " ".join(argv[3:])))
+                id_file.close()
+        else:   # no private key, use password-based login
+            sh("ssh {user}@{host} -p {port} {more}".format(
+                user = user, host = host, port = port,
+                more = " ".join(argv[3:])))
 
 
     def cmd_up(self, argv):
