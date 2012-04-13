@@ -10,10 +10,10 @@ Inspired by [Vagrant](http://vagrantup.com/)
 Requirement
 ----
 
-* Mac OS X 10.7+
-* Python 2.6+
-* Virtualbox 4.1+
-* (Optional) OpenSSH SSH client 5.6+
+* Mac OS X 10.7
+* Python 2.7
+* Virtualbox 4
+* (Optional) OpenSSH SSH client
 
 
 Usage

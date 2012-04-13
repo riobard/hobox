@@ -169,12 +169,14 @@ class Config(object):
 #### Calling external commands ####
 
 def sh(cmd):
-    subprocess.call(shlex.split(cmd))
+    return subprocess.call(shlex.split(cmd))
 
 
 
 def vbm(cmd):
-    sh("VBoxManage " + cmd)
+    returncode = sh("VBoxManage " + cmd)
+    if returncode:
+        sys.exit(returncode)
 
 
 
