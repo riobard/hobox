@@ -9,6 +9,7 @@ import shlex
 import subprocess
 import sys
 import tempfile
+import time
 import zipfile
 
 
@@ -171,6 +172,9 @@ class Config(object):
 def sh(cmd):
     return subprocess.call(shlex.split(cmd))
 
+
+def psh(cmd):
+    return subprocess.check_output(shlex.split(cmd))
 
 
 def vbm(cmd):
@@ -374,6 +378,29 @@ class Hobox(object):
             sh("ssh {user}@{host} -p {port} {more}".format(
                 user = user, host = host, port = port,
                 more = " ".join(argv[3:])))
+
+
+    def cmd_state(self, argv):
+        print self.vm_state(argv)
+
+
+    def vm_state(self, argv):
+        for line in psh("VBoxManage showvminfo {0}".format(self.name)).split('\n'):
+            if line.startswith('State:'):
+                return line[6:].strip()
+        return ''
+
+
+    def cmd_reboot(self, argv):
+        print 'shutting down...',
+        self.cmd_down(argv)
+        while self.vm_state(argv).startswith('running'):
+            time.sleep(1)
+        print 'OK'
+        print 'starting up...',
+        time.sleep(3)
+        self.cmd_up(argv)
+        print 'OK'
 
 
     def cmd_up(self, argv):
