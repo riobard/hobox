@@ -3,7 +3,7 @@
 import ConfigParser
 import collections
 import errno
-import os.path
+import os
 import re
 import shlex
 import subprocess
@@ -13,6 +13,8 @@ import time
 import zipfile
 
 
+if os.environ['HOBOX_HOME'] is not None:
+    os.chdir(os.environ['HOBOX_HOME'])
 
 #### Config file related ####
 
