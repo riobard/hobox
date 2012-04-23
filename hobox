@@ -13,8 +13,8 @@ import time
 import zipfile
 
 
-if os.environ.get('HOBOX_HOME') is not None:
-    os.chdir(os.environ['HOBOX_HOME'])
+if 'HOBOXROOT' in os.environ:
+    os.chdir(os.environ['HOBOXROOT'])
 
 #### Config file related ####
 
@@ -278,6 +278,9 @@ class Hobox(object):
     def __init__(self, name):
         self.name = name
         path = name if name.endswith(self.suffix) else name + self.suffix
+        if not os.path.exists(path):
+            sys.exit("Could not find {0}".format(path))
+
         if zipfile.is_zipfile(path):
             self._z = zipfile.ZipFile(path)
             self.config = Config(self._z.open("hobox.cfg"))
