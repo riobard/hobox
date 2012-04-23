@@ -9,6 +9,7 @@ import shlex
 import subprocess
 import sys
 import tempfile
+import time
 import zipfile
 
 
@@ -168,15 +169,19 @@ class Config(object):
 
 #### Calling external commands ####
 
-def sh(cmd):
+def call(cmd):
     return subprocess.call(shlex.split(cmd))
 
 
+def sh(cmd):
+    return subprocess.check_output(shlex.split(cmd))
+
 
 def vbm(cmd):
-    returncode = sh("VBoxManage " + cmd)
-    if returncode:
-        sys.exit(returncode)
+    try:
+        return sh("VBoxManage " + cmd)
+    except subprocess.CalledProcessError as e:
+        sys.exit(e.returncode)
 
 
 
@@ -366,24 +371,48 @@ class Hobox(object):
                 f.close()
                 id_file.file.flush()
                 print 'Connecting {0}@{1} -p {2}'.format(user, host, port)
-                sh("ssh {user}@{host} -p {port} -i {key} {more}".format(
+                call("ssh {user}@{host} -p {port} -i {key} {more}".format(
                     user = user, host = host, port = port, key = id_file.name, 
                     more = " ".join(argv[3:])))
                 id_file.close()
         else:   # no private key, use password-based login
-            sh("ssh {user}@{host} -p {port} {more}".format(
+            call("ssh {user}@{host} -p {port} {more}".format(
                 user = user, host = host, port = port,
                 more = " ".join(argv[3:])))
 
 
+    def cmd_state(self, argv):
+        print self.vm_state()
+
+
+    def vm_state(self):
+        output = vbm("showvminfo {0} --machinereadable".format(self.name))
+        for line in output.split("\n"):
+            if line.startswith("VMState="):
+                return line[9:~0]
+        return ""
+
+
+    def cmd_reboot(self, argv):
+        self.cmd_down(argv)
+        while self.vm_state() == "running":
+            time.sleep(1)
+        print "Shutdown OK. Startup..."
+        self.cmd_up(argv)
+
+
     def cmd_up(self, argv):
-        headless  = len(argv) > 3 and argv[3] == "-d"
-        sh("VBoxManage startvm {0} {1}".format(self.name, 
-            "--type headless" if headless else ""))
+        if self.vm_state() != "running":
+            headless  = len(argv) > 3 and argv[3] == "-d"
+            sh("VBoxManage startvm {0} {1}".format(self.name, 
+                "--type headless" if headless else ""))
+        else:
+            print "{0} is already running".format(self.name)
 
 
     def cmd_down(self, argv):
-        vbm("controlvm {0} acpipowerbutton".format(self.name))
+        if self.vm_state() == "running":
+            vbm("controlvm {0} acpipowerbutton".format(self.name))
 
 
     def cmd_suspend(self, argv):
