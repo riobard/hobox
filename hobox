@@ -13,7 +13,7 @@ import time
 import zipfile
 
 
-if os.environ['HOBOX_HOME'] is not None:
+if os.environ.get('HOBOX_HOME') is not None:
     os.chdir(os.environ['HOBOX_HOME'])
 
 #### Config file related ####
