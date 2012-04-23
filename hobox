@@ -377,7 +377,7 @@ class Hobox(object):
 
 
     def cmd_up(self, argv):
-        headless=False
+        headless  = len(argv) > 3 and argv[3] == "-d"
         sh("VBoxManage startvm {0} {1}".format(self.name, 
             "--type headless" if headless else ""))
 
