@@ -1,0 +1,23 @@
+_hobox()
+{
+  local cur prev opts base
+  COMPREPLY=()
+  cur="${COMP_WORDS[COMP_CWORD]}"
+  prev="${COMP_WORDS[COMP_CWORD-1]}"
+  opts=`hobox -h`
+
+  case "${prev}" in
+    hobox)
+    ;;
+    *)
+      local names=`hobox -l`
+      COMPREPLY=( $(compgen -W "${names}" -- ${cur}) )
+      return 0
+    ;;
+  esac
+
+  COMPREPLY=($(compgen -W "${opts}" -- ${cur}))  
+  return 0
+}
+
+complete -F _hobox hobox
