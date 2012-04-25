@@ -566,6 +566,21 @@ def usage(argv):
     print "{0} {1} [vm name]".format(cmd, subcmds)
 
 
+def printopts():
+    subcmds = []
+    for each in dir(Hobox):
+        if each.startswith("cmd_"):
+            subcmds.append(each[4:])
+    print ' '.join(sorted(subcmds))
+
+
+def printvms():
+    files = []
+    for filename in os.listdir('.'):
+        if filename.endswith('.hobox'):
+            files.append(filename[:-6])
+    print ' '.join(sorted(files))
+
 
 def main(argv):
     if len(argv) >= 3:
@@ -573,6 +588,11 @@ def main(argv):
         vmname = argv[2]
         hobox = Hobox(vmname)
         getattr(hobox, "cmd_" + subcmd, usage)(argv)
+    elif len(argv) == 2:
+        if argv[1] == '-h':
+            printopts()
+        elif argv[1] == '-l':
+            printvms()
     else:
         usage(argv)
 
